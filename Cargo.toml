@@ -1,7 +1,8 @@
 [workspace]
 members = [
 	"swhkd",
-	"swhks"
+	"swhkd-libinput",
+	"swhks",
 ]
 
 [profile.release]
