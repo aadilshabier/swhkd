@@ -1,15 +1,12 @@
-use input::event::keyboard::{KeyState, KeyboardEventTrait};
 use input::{Libinput, LibinputInterface};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use std::fs::{File, OpenOptions};
 use std::os::unix::{fs::OpenOptionsExt, io::OwnedFd};
 use std::path::Path;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use tokio::io::unix::AsyncFd;
+use std::io;
 
 use nix::ioctl_write_int;
-
-const MAX_DELAY: Duration = Duration::from_millis(20);
 
 ioctl_write_int!(eviocgrab, b'E', 0x90);
 
@@ -26,7 +23,6 @@ pub fn ungrab(fd: i32) -> std::io::Result<()> {
     }
     Ok(())
 }
-
 
 struct Interface;
 
@@ -51,28 +47,23 @@ impl LibinputInterface for Interface {
 }
 
 
-fn main() {
-    
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let mut input = Libinput::new_with_udev(Interface);
     input.udev_assign_seat("seat0").unwrap();
-    let mut last = Instant::now();
+    let mut input = AsyncFd::new(input)?;
     loop {
-        input.dispatch().unwrap();
-        for event in &mut input {
-            use input::event::{Event::*, KeyboardEvent::Key};
-            // let x = event.device().;
-            if let Keyboard(Key(x)) = &event {
-                if x.key_state() == KeyState::Pressed {
-                    println!("Pressed {}", x.key());
-                }
+        let mut guard = input.readable_mut().await?;
+        
+        guard.try_io(|inner| {
+            let input = inner.get_mut();
+            input.dispatch()?;
+            for event in input {
+                println!("Got event: {:?}", event);
             }
-            println!("Got event: {:?}", event);
-        }
-        let now = Instant::now();
-        let delta = now - last;
-        if MAX_DELAY > delta {
-            sleep(MAX_DELAY - delta);
-        }
-        last = Instant::now();
+            Ok(())
+        }).unwrap()?;
+        // NOTE: this is very important!!
+        guard.clear_ready();
     }
 }

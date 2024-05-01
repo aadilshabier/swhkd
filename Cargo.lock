@@ -28,6 +28,7 @@ dependencies = [
  "input",
  "libc",
  "nix 0.28.0",
+ "tokio",
 ]
 
 [[package]]
