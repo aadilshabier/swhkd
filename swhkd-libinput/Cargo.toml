@@ -1,0 +1,20 @@
+[package]
+name = "Simple-Wayland-HotKey-Daemon-Libinput"
+version = "0.1.0"
+edition = "2024"
+description = "Sxhkd clone for Wayland (works on TYY and X11 too) using libinput"
+authors = [
+    "Mohammad Aadil Shabier <aadilshabier1@gmail.com>\n",
+]
+
+[dependencies]
+env_logger = "0.11.8"
+input = "0.9"
+libc = "0.2"
+log = "0.4.27"
+nix = {version = "0.30", features = ["ioctl"]}
+tokio = { version = "1.45", features = ["rt-multi-thread", "net", "macros"]}
+
+[[bin]]
+name = "swhkd_libinput"
+path = "src/daemon.rs"
