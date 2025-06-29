@@ -48,10 +48,106 @@ struct Interface {
     devices: HashSet<String>,
 }
 
+fn build_uinput_dev() -> Result<uinput::Device, ()> {
+    use uinput::event;
+    let mut builder = uinput::default().expect("uinput module not loaded");
+    // Keyboard
+    builder = builder.name("uinput device").unwrap().event(event::Keyboard::All).unwrap();
+    // Mouse buttons
+    for event in event::controller::Mouse::iter_variants() {
+        builder = builder.event(event).unwrap();
+    }
+    // Mouse Movement
+    for event in event::relative::Position::iter_variants() {
+        builder = builder.event(event).unwrap()
+    }
+    // Mouse Wheel
+    for event in event::relative::Wheel::iter_variants() {
+        builder = builder.event(event).unwrap()
+    }
+    builder.create().map_err(|_| ())
+}
+
+fn handle_event(event: input::Event, uinput_dev: &mut uinput::Device) -> Result<(), ()> {
+    use input::Event::*;
+    match event {
+        Keyboard(keyboard_event) => {
+            emit_libinput_keyboard_event(uinput_dev, keyboard_event).unwrap();
+        }
+        Pointer(pointer_event) => {
+            emit_libinput_pointer_event(uinput_dev, pointer_event).unwrap();
+        }
+        _ => log::info!("Event: {event:?}"),
+    };
+    Ok(())
+}
+
+fn emit_libinput_keyboard_event(
+    device: &mut uinput::Device,
+    keyboard_event: input::event::KeyboardEvent,
+) -> Result<(), ()> {
+    let device_name = keyboard_event.device().name().to_string();
+    let key_code = keyboard_event.key() as i32;
+    let state = keyboard_event.key_state() as i32;
+    log::info!("Device: {device_name}, key: {key_code}, state: {state:?}");
+
+    device.write(1, key_code, 1 - state).unwrap();
+    device.synchronize().unwrap();
+    Ok(())
+}
+
+fn emit_libinput_pointer_event(
+    device: &mut uinput::Device,
+    pointer_event: input::event::PointerEvent,
+) -> Result<(), ()> {
+    use input::event::PointerEvent::*;
+    match pointer_event {
+        Motion(motion_event) => {
+            use uinput::event::{Relative, relative::Position};
+            let dx = motion_event.dx_unaccelerated();
+            let dy = motion_event.dy_unaccelerated();
+            log::info!("Mouse: {}, dx: {dx:.2}, dy: {dy:.2}", motion_event.device().name(),);
+            device.send(Relative::Position(Position::X), dx as i32).unwrap();
+            device.send(Relative::Position(Position::Y), dy as i32).unwrap();
+            device.synchronize().unwrap();
+        }
+        Button(button_event) => {
+            let button = button_event.button() as i32;
+            let state = button_event.button_state() as i32;
+            log::info!(
+                "Mouse: {}, button: {button}, state: {state:?}",
+                button_event.device().name(),
+            );
+            device.write(1, button, 1 - state).unwrap();
+            device.synchronize().unwrap();
+        }
+        ScrollWheel(scrollwheel_event) => {
+            use uinput::event::{Relative, relative::Wheel};
+            let vert = scrollwheel_event.scroll_value_v120(input::event::pointer::Axis::Vertical);
+            let hori = scrollwheel_event.scroll_value_v120(input::event::pointer::Axis::Horizontal);
+            log::info!(
+                "Mouse: {}, wheel vert: {vert}, hori: {hori}",
+                scrollwheel_event.device().name(),
+            );
+            let (event, value) = if vert != 0.0 {
+                (Relative::Wheel(Wheel::Vertical), -vert/120.0)
+            } else {
+                (Relative::Wheel(Wheel::Horizontal), -hori/120.0)
+            };
+            device.send(event, value as i32).unwrap();
+            device.synchronize().unwrap();
+        }
+        _ => {
+            log::info!("Mouse: {}, event: {:?}", pointer_event.device().name(), pointer_event);
+        }
+    }
+    Ok(())
+}
+
 impl Interface {
     pub fn new(path: &Path) -> std::io::Result<Self> {
         let devices = get_devices_from_file(path)?;
-        log::debug!("Devices: {:?}", devices);
+        log::debug!("Devices: {devices:?}");
 
         Ok(Self { devices })
     }
@@ -101,6 +197,8 @@ async fn main() -> std::io::Result<()> {
     input.udev_assign_seat("seat0").unwrap();
     let mut input = AsyncFd::new(input)?;
 
+    let mut uinput_dev = build_uinput_dev().unwrap();
+
     loop {
         let mut guard = input.readable_mut().await?;
 
@@ -108,21 +206,7 @@ async fn main() -> std::io::Result<()> {
             let input = inner.get_mut();
             input.dispatch()?;
             for event in input {
-                match event {
-                    input::Event::Keyboard(keyboard_event) => {
-                        let device = keyboard_event.device().name().to_string();
-                        let key = keyboard_event.key();
-                        let key_state = keyboard_event.key_state();
-                        log::info!(
-                            "Device: {}, ev: {}, key pressed: {}, state: {:?}",
-                            device,
-                            keyboard_event.device().sysname(),
-                            key,
-                            key_state
-                        );
-                    }
-                    _ => log::info!("Event: {:?}", event),
-                };
+                handle_event(event, &mut uinput_dev).unwrap();
             }
             Ok(())
         }) {
