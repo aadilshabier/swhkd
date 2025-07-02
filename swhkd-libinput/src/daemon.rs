@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     error::Error,
     fs::{File, OpenOptions},
-    io::BufRead,
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
     path::Path,
     process::exit,
@@ -10,148 +9,38 @@ use std::{
 
 use input::{
     Libinput, LibinputInterface,
-    event::{EventTrait, keyboard::KeyboardEventTrait},
 };
+
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
-use nix::ioctl_write_int;
 use tokio::io::unix::AsyncFd;
 
-ioctl_write_int!(eviocgrab, b'E', 0x90);
-
-fn grab(fd: i32) -> std::io::Result<()> {
-    unsafe {
-        eviocgrab(fd, 1)?;
-    }
-    Ok(())
-}
-
-fn ungrab(fd: i32) -> std::io::Result<()> {
-    unsafe {
-        eviocgrab(fd, 0)?;
-    }
-    Ok(())
-}
-
-fn name_from_path(path: &Path) -> std::io::Result<String> {
-    let ev = path.strip_prefix("/dev/input").expect("This path should begin with /dev/input");
-    let name_path = Path::new("/sys/class/input/").join(ev).join("device/name");
-    let name = std::fs::read_to_string(name_path)?.trim_ascii_end().to_string();
-    Ok(name)
-}
-
-fn get_devices_from_file(path: &Path) -> std::io::Result<HashSet<String>> {
-    let file = File::open(path)?;
-    let reader = std::io::BufReader::new(file);
-    let result = reader.lines().map(|x| x.unwrap().trim_ascii_end().to_string()).collect();
-    Ok(result)
-}
+mod device;
+mod uinput_layer;
 
 struct Interface {
     devices: HashSet<String>,
 }
 
-fn build_uinput_dev() -> Result<uinput::Device, uinput::Error> {
-    use uinput::event;
-    let mut builder = uinput::default()?;
-    // Keyboard
-    builder = builder.name("uinput device")?.event(event::Keyboard::All)?;
-    // Mouse buttons
-    for event in event::controller::Mouse::iter_variants() {
-        builder = builder.event(event)?;
-    }
-    // Mouse Movement
-    for event in event::relative::Position::iter_variants() {
-        builder = builder.event(event)?
-    }
-    // Mouse Wheel
-    for event in event::relative::Wheel::iter_variants() {
-        builder = builder.event(event)?
-    }
-    builder.create()
-}
-
 fn handle_event(
     event: input::Event,
-    uinput_dev: &mut uinput::Device,
+    uinput_dev: &mut uinput_layer::Device,
 ) -> Result<(), Box<dyn Error>> {
     use input::Event::*;
     match event {
         Keyboard(keyboard_event) => {
-            emit_libinput_keyboard_event(uinput_dev, keyboard_event)?;
+            uinput_layer::emit_libinput_keyboard_event(uinput_dev, keyboard_event)?;
         }
         Pointer(pointer_event) => {
-            emit_libinput_pointer_event(uinput_dev, pointer_event)?;
+            uinput_layer::emit_libinput_pointer_event(uinput_dev, pointer_event)?;
         }
         _ => log::info!("Event: {event:?}"),
     };
     Ok(())
 }
 
-fn emit_libinput_keyboard_event(
-    device: &mut uinput::Device,
-    keyboard_event: input::event::KeyboardEvent,
-) -> Result<(), uinput::Error> {
-    let device_name = keyboard_event.device().name().to_string();
-    let key_code = keyboard_event.key() as i32;
-    let state = keyboard_event.key_state() as i32;
-    log::info!("Device: {device_name}, key: {key_code}, state: {state:?}");
-
-    device.write(1, key_code, 1 - state)?;
-    device.synchronize()?;
-    Ok(())
-}
-
-fn emit_libinput_pointer_event(
-    device: &mut uinput::Device,
-    pointer_event: input::event::PointerEvent,
-) -> Result<(), uinput::Error> {
-    use input::event::PointerEvent::*;
-    match pointer_event {
-        Motion(motion_event) => {
-            use uinput::event::{Relative, relative::Position};
-            let dx = motion_event.dx_unaccelerated();
-            let dy = motion_event.dy_unaccelerated();
-            log::info!("Mouse: {}, dx: {dx:.2}, dy: {dy:.2}", motion_event.device().name(),);
-            device.send(Relative::Position(Position::X), dx as i32)?;
-            device.send(Relative::Position(Position::Y), dy as i32)?;
-            device.synchronize()?;
-        }
-        Button(button_event) => {
-            let button = button_event.button() as i32;
-            let state = button_event.button_state() as i32;
-            log::info!(
-                "Mouse: {}, button: {button}, state: {state:?}",
-                button_event.device().name(),
-            );
-            device.write(1, button, 1 - state)?;
-            device.synchronize()?;
-        }
-        ScrollWheel(scrollwheel_event) => {
-            use uinput::event::{Relative, relative::Wheel};
-            let vert = scrollwheel_event.scroll_value_v120(input::event::pointer::Axis::Vertical);
-            let hori = scrollwheel_event.scroll_value_v120(input::event::pointer::Axis::Horizontal);
-            log::info!(
-                "Mouse: {}, wheel vert: {vert}, hori: {hori}",
-                scrollwheel_event.device().name(),
-            );
-            let (event, value) = if vert != 0.0 {
-                (Relative::Wheel(Wheel::Vertical), -vert / 120.0)
-            } else {
-                (Relative::Wheel(Wheel::Horizontal), -hori / 120.0)
-            };
-            device.send(event, value as i32)?;
-            device.synchronize()?;
-        }
-        _ => {
-            log::info!("Mouse: {}, event: {:?}", pointer_event.device().name(), pointer_event);
-        }
-    }
-    Ok(())
-}
-
 impl Interface {
     pub fn new(path: &Path) -> std::io::Result<Self> {
-        let devices = get_devices_from_file(path)?;
+        let devices = device::get_devices_from_file(path)?;
         log::debug!("Devices: {devices:?}");
 
         Ok(Self { devices })
@@ -164,7 +53,7 @@ impl LibinputInterface for Interface {
         path: &std::path::Path,
         flags: i32,
     ) -> Result<std::os::unix::io::OwnedFd, i32> {
-        let name = match name_from_path(path) {
+        let name = match device::name_from_path(path) {
             Ok(name) => name,
             Err(err) => return Err(err.raw_os_error().unwrap_or(-1)),
         };
@@ -179,7 +68,7 @@ impl LibinputInterface for Interface {
                 .write((flags & O_WRONLY != 0) | (flags & O_RDWR != 0))
                 .open(path)
                 .map(|file| {
-                    grab(file.as_raw_fd()).expect("Could not grab fd");
+                    device::grab(file.as_raw_fd()).expect("Could not grab fd");
                     file.into()
                 })
                 .map_err(|err| err.raw_os_error().unwrap_or(-1))
@@ -187,7 +76,7 @@ impl LibinputInterface for Interface {
     }
 
     fn close_restricted(&mut self, fd: std::os::unix::io::OwnedFd) {
-        ungrab(fd.as_raw_fd()).expect("Could not ungrab fd");
+        device::ungrab(fd.as_raw_fd()).expect("Could not ungrab fd");
         drop(File::from(fd));
     }
 }
@@ -205,7 +94,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut input = AsyncFd::new(input)?;
 
-    let mut uinput_dev = match build_uinput_dev() {
+    let mut uinput_dev = match uinput_layer::build_uinput_dev() {
         Err(err) => {
             log::error!("Could not create uinput device: {}", err);
             exit(1);
