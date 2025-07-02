@@ -1,9 +1,11 @@
 use std::{
     collections::HashSet,
+    error::Error,
     fs::{File, OpenOptions},
     io::BufRead,
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
     path::Path,
+    process::exit,
 };
 
 use input::{
@@ -48,34 +50,37 @@ struct Interface {
     devices: HashSet<String>,
 }
 
-fn build_uinput_dev() -> Result<uinput::Device, ()> {
+fn build_uinput_dev() -> Result<uinput::Device, uinput::Error> {
     use uinput::event;
-    let mut builder = uinput::default().expect("uinput module not loaded");
+    let mut builder = uinput::default()?;
     // Keyboard
-    builder = builder.name("uinput device").unwrap().event(event::Keyboard::All).unwrap();
+    builder = builder.name("uinput device")?.event(event::Keyboard::All)?;
     // Mouse buttons
     for event in event::controller::Mouse::iter_variants() {
-        builder = builder.event(event).unwrap();
+        builder = builder.event(event)?;
     }
     // Mouse Movement
     for event in event::relative::Position::iter_variants() {
-        builder = builder.event(event).unwrap()
+        builder = builder.event(event)?
     }
     // Mouse Wheel
     for event in event::relative::Wheel::iter_variants() {
-        builder = builder.event(event).unwrap()
+        builder = builder.event(event)?
     }
-    builder.create().map_err(|_| ())
+    builder.create()
 }
 
-fn handle_event(event: input::Event, uinput_dev: &mut uinput::Device) -> Result<(), ()> {
+fn handle_event(
+    event: input::Event,
+    uinput_dev: &mut uinput::Device,
+) -> Result<(), Box<dyn Error>> {
     use input::Event::*;
     match event {
         Keyboard(keyboard_event) => {
-            emit_libinput_keyboard_event(uinput_dev, keyboard_event).unwrap();
+            emit_libinput_keyboard_event(uinput_dev, keyboard_event)?;
         }
         Pointer(pointer_event) => {
-            emit_libinput_pointer_event(uinput_dev, pointer_event).unwrap();
+            emit_libinput_pointer_event(uinput_dev, pointer_event)?;
         }
         _ => log::info!("Event: {event:?}"),
     };
@@ -85,21 +90,21 @@ fn handle_event(event: input::Event, uinput_dev: &mut uinput::Device) -> Result<
 fn emit_libinput_keyboard_event(
     device: &mut uinput::Device,
     keyboard_event: input::event::KeyboardEvent,
-) -> Result<(), ()> {
+) -> Result<(), uinput::Error> {
     let device_name = keyboard_event.device().name().to_string();
     let key_code = keyboard_event.key() as i32;
     let state = keyboard_event.key_state() as i32;
     log::info!("Device: {device_name}, key: {key_code}, state: {state:?}");
 
-    device.write(1, key_code, 1 - state).unwrap();
-    device.synchronize().unwrap();
+    device.write(1, key_code, 1 - state)?;
+    device.synchronize()?;
     Ok(())
 }
 
 fn emit_libinput_pointer_event(
     device: &mut uinput::Device,
     pointer_event: input::event::PointerEvent,
-) -> Result<(), ()> {
+) -> Result<(), uinput::Error> {
     use input::event::PointerEvent::*;
     match pointer_event {
         Motion(motion_event) => {
@@ -107,9 +112,9 @@ fn emit_libinput_pointer_event(
             let dx = motion_event.dx_unaccelerated();
             let dy = motion_event.dy_unaccelerated();
             log::info!("Mouse: {}, dx: {dx:.2}, dy: {dy:.2}", motion_event.device().name(),);
-            device.send(Relative::Position(Position::X), dx as i32).unwrap();
-            device.send(Relative::Position(Position::Y), dy as i32).unwrap();
-            device.synchronize().unwrap();
+            device.send(Relative::Position(Position::X), dx as i32)?;
+            device.send(Relative::Position(Position::Y), dy as i32)?;
+            device.synchronize()?;
         }
         Button(button_event) => {
             let button = button_event.button() as i32;
@@ -118,8 +123,8 @@ fn emit_libinput_pointer_event(
                 "Mouse: {}, button: {button}, state: {state:?}",
                 button_event.device().name(),
             );
-            device.write(1, button, 1 - state).unwrap();
-            device.synchronize().unwrap();
+            device.write(1, button, 1 - state)?;
+            device.synchronize()?;
         }
         ScrollWheel(scrollwheel_event) => {
             use uinput::event::{Relative, relative::Wheel};
@@ -130,12 +135,12 @@ fn emit_libinput_pointer_event(
                 scrollwheel_event.device().name(),
             );
             let (event, value) = if vert != 0.0 {
-                (Relative::Wheel(Wheel::Vertical), -vert/120.0)
+                (Relative::Wheel(Wheel::Vertical), -vert / 120.0)
             } else {
-                (Relative::Wheel(Wheel::Horizontal), -hori/120.0)
+                (Relative::Wheel(Wheel::Horizontal), -hori / 120.0)
             };
-            device.send(event, value as i32).unwrap();
-            device.synchronize().unwrap();
+            device.send(event, value as i32)?;
+            device.synchronize()?;
         }
         _ => {
             log::info!("Mouse: {}, event: {:?}", pointer_event.device().name(), pointer_event);
@@ -177,7 +182,7 @@ impl LibinputInterface for Interface {
                     grab(file.as_raw_fd()).expect("Could not grab fd");
                     file.into()
                 })
-                .map_err(|err| err.raw_os_error().unwrap())
+                .map_err(|err| err.raw_os_error().unwrap_or(-1))
         }
     }
 
@@ -188,16 +193,25 @@ impl LibinputInterface for Interface {
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
     let interface = Interface::new(Path::new("./devices.txt"))?;
 
     let mut input = Libinput::new_with_udev(interface);
-    input.udev_assign_seat("seat0").unwrap();
+    if let Err(_) = input.udev_assign_seat("seat0") {
+        log::error!("Could not assign udev to seat0");
+        exit(1);
+    }
     let mut input = AsyncFd::new(input)?;
 
-    let mut uinput_dev = build_uinput_dev().unwrap();
+    let mut uinput_dev = match build_uinput_dev() {
+        Err(err) => {
+            log::error!("Could not create uinput device: {}", err);
+            exit(1);
+        }
+        Ok(res) => res,
+    };
 
     loop {
         let mut guard = input.readable_mut().await?;
@@ -206,7 +220,10 @@ async fn main() -> std::io::Result<()> {
             let input = inner.get_mut();
             input.dispatch()?;
             for event in input {
-                handle_event(event, &mut uinput_dev).unwrap();
+                if let Err(err) = handle_event(event, &mut uinput_dev) {
+                    log::error!("Event handling failed: {}", err);
+                    exit(1);
+                }
             }
             Ok(())
         }) {
