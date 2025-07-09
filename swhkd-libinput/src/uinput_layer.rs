@@ -1,4 +1,4 @@
-use input::event::{keyboard::KeyboardEventTrait, EventTrait};
+use input::event::EventTrait;
 use uinput;
 
 pub use uinput::Device;
@@ -30,6 +30,7 @@ pub fn emit_libinput_keyboard_event(
     device: &mut uinput::Device,
     keyboard_event: input::event::KeyboardEvent,
 ) -> Result<(), uinput::Error> {
+    use input::event::keyboard::KeyboardEventTrait;
     let device_name = keyboard_event.device().name().to_string();
     let key_code = keyboard_event.key() as i32;
     let state = keyboard_event.key_state() as i32;
@@ -67,10 +68,15 @@ pub fn emit_libinput_pointer_event(
             device.synchronize()?;
         }
         ScrollWheel(scrollwheel_event) => {
-            use input::event::pointer::Axis;
+            use input::event::pointer::{Axis, PointerScrollEvent};
             use uinput::event::{Relative, relative::Wheel};
-            let vert = scrollwheel_event.scroll_value_v120(Axis::Vertical);
-            let hori = scrollwheel_event.scroll_value_v120(Axis::Horizontal);
+            let (mut vert, mut hori) = (0.0, 0.0);
+            if scrollwheel_event.has_axis(Axis::Vertical) {
+                vert = scrollwheel_event.scroll_value_v120(Axis::Vertical);
+            }
+            if scrollwheel_event.has_axis(Axis::Horizontal) {
+                hori = scrollwheel_event.scroll_value_v120(Axis::Horizontal);
+            }
             log::info!(
                 "Mouse: {}, wheel vert: {vert}, hori: {hori}",
                 scrollwheel_event.device().name(),
