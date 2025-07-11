@@ -7,15 +7,13 @@ use std::{
     process::exit,
 };
 
-use input::{
-    Libinput, LibinputInterface,
-};
+use super::device;
+use super::uinput_layer;
+
+use input::{Libinput, LibinputInterface};
 
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use tokio::io::unix::AsyncFd;
-
-mod device;
-mod uinput_layer;
 
 struct Interface {
     devices: HashSet<String>,
@@ -81,8 +79,7 @@ impl LibinputInterface for Interface {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+pub async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
     let interface = Interface::new(Path::new("./devices.txt"))?;

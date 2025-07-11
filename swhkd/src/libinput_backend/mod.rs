@@ -1,5 +1,3 @@
-pub mod daemon {
-    async fn main() -> Result<(), Box<dyn Error>> {
-        unimplemented!()
-    }
-}
+pub mod daemon;
+mod device;
+mod uinput_layer;
