@@ -107,7 +107,12 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     // Get the UID of the user that is not a system user
     let invoking_uid = get_uid()?;
 
-    log::debug!("Wating for server to start...");
+    // Calculate a server cooldown at which the server will be pinged to check for env changes.
+    let cooldown = args.cooldown;
+    let delta = (cooldown as f64 * 0.1) as u64;
+    let server_cooldown = std::cmp::max(0, cooldown - delta);
+
+    log::debug!("Waiting for swhks socket...");
     // The first and the most important request for the env
     // Without this request, the environmental variables responsible for the reading for the config
     // file will not be available.
@@ -122,7 +127,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 break;
             }
             Ok((None, _)) => {
-                log::debug!("Waiting for env...");
+                sleep(Duration::from_millis(server_cooldown)).await;
                 continue;
             }
             Err(_) => {}
@@ -162,11 +167,6 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         }
         fs::set_permissions(&log_path, Permissions::from_mode(0o666)).unwrap();
     }
-
-    // Calculate a server cooldown at which the server will be pinged to check for env changes.
-    let cooldown = args.cooldown;
-    let delta = (cooldown as f64 * 0.1) as u64;
-    let server_cooldown = std::cmp::max(0, cooldown - delta);
 
     // Set up a channel to communicate with the server
     // The channel can have upto 100 commands in the queue
@@ -216,8 +216,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             let log = log.clone();
 
             // Set the user and group id to the invoking user for the thread
-            setgid(Gid::from_raw(invoking_uid)).unwrap();
-            setuid(Uid::from_raw(invoking_uid)).unwrap();
+            setgid(Gid::from_raw(invoking_uid))
+                .expect(&format!("Failed to set group-id to {}", invoking_uid));
+            setuid(Uid::from_raw(invoking_uid))
+                .expect(&format!("Failed to set user-id to {}", invoking_uid));
 
             // Command execution
             let mut cmd = Command::new("sh");
@@ -601,6 +603,11 @@ pub async fn send_command(
 fn get_uid() -> Result<u32, Box<dyn Error>> {
     let status_content = fs::read_to_string(format!("/proc/{}/loginuid", std::process::id()))?;
     let uid = status_content.trim().parse::<u32>()?;
+    if uid == u32::MAX {
+        // loginuid == u32::MAX ('-1' in unsigned long), means the value is unset
+        return Err(format!("loginuid not set for process {}", std::process::id()).into());
+    }
+
     Ok(uid)
 }
 
@@ -626,13 +633,20 @@ pub fn refresh_env(
 
     // Follows a two part process to recieve the env hash and the env itself
     // First part: Send a "1" as a byte to the socket to request the hash
-    if let Ok(mut stream) = UnixStream::connect(&sock_path) {
-        let n = stream.write(&[1])?;
-        if n != 1 {
-            log::error!("Failed to write to socket.");
+    log::debug!("reading from socket {}", sock_path);
+    match UnixStream::connect(&sock_path) {
+        Ok(mut stream) => {
+            let n = stream.write(&[1])?;
+            if n != 1 {
+                log::error!("Failed to write to socket {}", sock_path);
+                return Ok((None, prev_hash));
+            }
+            stream.read_to_string(&mut buff)?;
+        }
+        Err(e) => {
+            log::warn!("Failed to connect to socket {}: {}", sock_path, e);
             return Ok((None, prev_hash));
         }
-        stream.read_to_string(&mut buff)?;
     }
 
     let env_hash = buff.parse().unwrap_or_default();
