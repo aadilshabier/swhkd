@@ -3,36 +3,8 @@ use std::{error::Error, io};
 use evdev::{uinput::VirtualDevice, Device, EventStream, InputEvent, Key};
 use tokio_stream::{StreamExt, StreamMap};
 
-use crate::backend::{self, Backend};
-
-// pub mod daemon;
-mod uinput;
-
-struct EvdevEvent {
-    inner_event: InputEvent,
-}
-
-impl EvdevEvent {
-    fn new(inner_event: InputEvent) -> Self {
-        Self { inner_event }
-    }
-}
-
-impl backend::Event for EvdevEvent {
-    fn kind(&self) -> evdev::InputEventKind {
-        self.inner_event.kind()
-    }
-    fn value(&self) -> i32 {
-        self.inner_event.value()
-    }
-    fn code(&self) -> u16 {
-        self.inner_event.code()
-    }
-
-    fn to_inputevent(&self) -> InputEvent {
-        InputEvent::new(self.inner_event.event_type(), self.code(), self.value())
-    }
-}
+use crate::backend::Backend;
+use crate::uinput;
 
 pub struct EvdevBackend {
     arg_devices: Vec<String>,
@@ -42,13 +14,13 @@ pub struct EvdevBackend {
 }
 
 impl EvdevBackend {
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
             arg_devices: vec![],
             uinput_device: None,
             uinput_switches_device: None,
             keyboard_stream_map: StreamMap::new(),
-        }
+        })
     }
 
     fn check_device_is_keyboard(device: &Device) -> bool {
@@ -160,22 +132,24 @@ impl Backend for EvdevBackend {
         Ok(())
     }
 
-    async fn next_event(&mut self) -> Option<(String, Box<dyn backend::Event>)> {
+    async fn next_event(&mut self) -> Option<(String, InputEvent)> {
         match self.keyboard_stream_map.next().await {
-            Some((node, Ok(event))) => Some((node, Box::new(EvdevEvent::new(event)))),
+            Some((node, Ok(event))) => Some((node, event)),
             _ => None,
         }
     }
 
-    fn emit_event(&mut self, event: &Box<dyn backend::Event>) -> Result<(), io::Error> {
-        let ev = event.to_inputevent();
+    fn emit_event(&mut self, event: &InputEvent) -> Result<(), io::Error> {
         if let Some(dev) = &mut self.uinput_device {
-            return dev.emit(&[ev]);
+            return dev.emit(&[event.clone()]);
         };
         Ok(())
     }
 
-    fn emit_switch_event(&mut self, event: &Box<dyn backend::Event>) -> Result<(), io::Error> {
-        todo!("NOOP")
+    fn emit_switch_event(&mut self, event: &InputEvent) -> Result<(), io::Error> {
+        if let Some(dev) = &mut self.uinput_switches_device {
+            return dev.emit(&[event.clone()]);
+        };
+        Ok(())
     }
 }

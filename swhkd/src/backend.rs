@@ -20,7 +20,7 @@ pub trait Backend {
     fn add_device(&mut self, device: &str) -> bool;
     fn remove_device(&mut self, device: &str) -> bool;
     fn create_uinput_devices(&mut self) -> Result<(), Box<dyn Error>>;
-    async fn next_event(&mut self) -> Option<(String, Box<dyn Event>)>;
-    fn emit_event(&mut self, event: &Box<dyn Event>) -> Result<(), io::Error>;
-    fn emit_switch_event(&mut self, event: &Box<dyn Event>) -> Result<(), io::Error>;
+    async fn next_event(&mut self) -> Option<(String, InputEvent)>;
+    fn emit_event(&mut self, event: &InputEvent) -> Result<(), io::Error>;
+    fn emit_switch_event(&mut self, event: &InputEvent) -> Result<(), io::Error>;
 }

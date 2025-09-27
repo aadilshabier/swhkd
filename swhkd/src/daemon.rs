@@ -2,6 +2,7 @@ mod backend;
 mod config;
 mod environ;
 mod perms;
+mod uinput;
 
 use backend::Backend;
 use clap::Parser;
@@ -31,8 +32,6 @@ use tokio::time::{sleep, Instant};
 use tokio::{select, sync::mpsc};
 use tokio_stream::StreamExt;
 use tokio_udev::{AsyncMonitorSocket, EventType, MonitorBuilder};
-
-//use uinput;
 
 #[cfg(all(feature = "evdev_backend", feature = "libinput_backend"))]
 compile_error!("Only one input backend can be enabled at a time");
@@ -90,7 +89,7 @@ struct Args {
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
-    let mut backend = InpBackend::new();
+    let mut backend = InpBackend::new()?;
 
     let args = Args::parse();
     // env::set_var("RUST_LOG", "swhkd=warn");
