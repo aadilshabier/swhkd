@@ -3,14 +3,7 @@ use std::{
     io::{self},
 };
 
-use evdev::{InputEvent, InputEventKind};
-
-pub trait Event {
-    fn kind(&self) -> InputEventKind;
-    fn value(&self) -> i32;
-    fn code(&self) -> u16;
-    fn to_inputevent(&self) -> InputEvent;
-}
+use evdev::InputEvent;
 
 pub trait Backend {
     fn get_initial_devices(

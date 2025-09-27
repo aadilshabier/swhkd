@@ -13,6 +13,9 @@ use std::os::unix::io::AsRawFd;
 #[cfg(not(feature = "no_rfkill"))]
 ioctl_none!(rfkill_noinput, b'R', 1);
 
+pub const UINPUT_DEVICE_NAME: &str = "swhkd virtual output";
+pub const UINPUT_SWITCHES_DEVICE_NAME: &str = "swhkd switches virtual output";
+
 pub fn create_uinput_device() -> Result<VirtualDevice, Box<dyn std::error::Error>> {
     let keys: AttributeSet<Key> = get_all_keys().iter().copied().collect();
 
@@ -20,7 +23,7 @@ pub fn create_uinput_device() -> Result<VirtualDevice, Box<dyn std::error::Error
         get_all_relative_axes().iter().copied().collect();
 
     let device = VirtualDeviceBuilder::new()?
-        .name("swhkd virtual output")
+        .name(UINPUT_DEVICE_NAME)
         .with_keys(&keys)?
         .with_relative_axes(&relative_axes)?
         .build()?;
@@ -50,7 +53,7 @@ pub fn create_uinput_switches_device() -> Result<VirtualDevice, Box<dyn std::err
     }
 
     let device = VirtualDeviceBuilder::new()?
-        .name("swhkd switches virtual output")
+        .name(UINPUT_SWITCHES_DEVICE_NAME)
         .with_switches(&switches)?
         .build()?;
     Ok(device)

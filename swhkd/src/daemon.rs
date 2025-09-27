@@ -19,7 +19,7 @@ use std::{
     env,
     error::Error,
     fs::{self, File, OpenOptions, Permissions},
-    io::{Read, Write},
+    io::{self, Read, Write},
     os::unix::{fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
     process::{exit, id, Command, Stdio},
@@ -50,6 +50,15 @@ use evdev_backend::EvdevBackend as InpBackend;
 mod libinput_backend;
 #[cfg(feature = "libinput_backend")]
 use libinput_backend::LibinputBackend as InpBackend;
+
+const UINPUT_DEVICE_NAMES: [&str; 2] = [uinput::UINPUT_DEVICE_NAME, uinput::UINPUT_SWITCHES_DEVICE_NAME];
+
+fn name_from_node(node: &Path) -> io::Result<String> {
+    let ev = node.strip_prefix("/dev/input").expect("This path should begin with /dev/input");
+    let name_path = Path::new("/sys/class/input/").join(ev).join("device/name");
+    let name = std::fs::read_to_string(name_path)?.trim_ascii_end().to_string();
+    Ok(name)
+}
 
 struct KeyboardState {
     state_modifiers: HashSet<config::Modifier>,
@@ -388,15 +397,16 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                         }
                     },
                 };
+                let name = name_from_node(Path::new(node))?;
 
                 match event.event_type() {
                     EventType::Add => {
-                        if backend.add_device(node) {
+                        if !UINPUT_DEVICE_NAMES.contains(&name.as_str()) && backend.add_device(node) {
                             keyboard_states.insert(node.to_string(), KeyboardState::new());
                         }
                     }
                     EventType::Remove => {
-                         if backend.remove_device(node) {
+                         if !UINPUT_DEVICE_NAMES.contains(&name.as_str()) && backend.remove_device(node) {
                             keyboard_states.remove(node);
                         }
                     }

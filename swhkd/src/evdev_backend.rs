@@ -72,7 +72,10 @@ impl Backend for EvdevBackend {
             .filter_map(|(path, mut device)| {
                 let _ = device.grab();
                 let path_string = match path.to_str() {
-                    Some(p) => p.to_string(),
+                    Some(p) => { 
+                        log::info!("Initial device added: {}", p);
+                        p.to_string()
+                    }
                     None => {
                         return None;
                     }

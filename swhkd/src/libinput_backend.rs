@@ -158,7 +158,9 @@ impl LibinputInterface for Interface {
     }
 
     fn close_restricted(&mut self, fd: std::os::unix::prelude::OwnedFd) {
-        ungrab(fd.as_raw_fd()).expect("Could not ungrab fd");
+        if let Err(err) = ungrab(fd.as_raw_fd()) {
+            log::error!("Could not ungrab fd: {}", err);
+        }
         drop(File::from(fd));
     }
 }
@@ -218,6 +220,7 @@ impl Backend for LibinputBackend {
             .filter_map(|path| {
                 if let Some(dev) = self.input.get_mut().path_add_device(&path) {
                     self.devices.insert(path.clone(), dev);
+                    log::info!("Initial device added: {}", path);
                     Some(path)
                 } else {
                     None
