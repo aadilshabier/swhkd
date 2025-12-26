@@ -13,6 +13,7 @@ pub fn load(path: &Path) -> Result<Vec<Mode>, ParseError> {
 pub struct KeyBinding {
     pub keysym: evdev::Key,
     pub modifiers: HashSet<Modifier>,
+    pub modifier_match: ModifierMatch, 
     pub send: bool,
     pub on_release: bool,
 }
@@ -41,13 +42,14 @@ pub trait Value {
 
 impl KeyBinding {
     pub fn new(keysym: evdev::Key, modifiers: HashSet<Modifier>) -> Self {
-        KeyBinding { keysym, modifiers, send: false, on_release: false }
+        KeyBinding { keysym, modifiers, send: false, on_release: false, modifier_match: ModifierMatch::Exact }
     }
 
     pub fn on_release(mut self) -> Self {
         self.on_release = true;
         self
     }
+    pub fn matches(&self, keysym: evdev::Key, pressed_modifiers: &HashSet<Modifier>, on_release: bool) -> bool {}
 }
 
 impl Prefix for KeyBinding {
@@ -221,4 +223,11 @@ fn sweet_def_to_kb(def: &Definition) -> KeyBinding {
         send: def.key.attribute == KeyAttribute::Send,
         on_release: def.key.attribute == KeyAttribute::OnRelease,
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum ModifierMatch {
+    Exact, 
+    AtLeast, 
+    Any
 }
