@@ -23,6 +23,7 @@ impl PartialEq for KeyBinding {
         self.keysym == other.keysym
             // Comparisons are order independent without manual iterations
             && self.modifiers == other.modifiers
+            && self.modifier_match == other.modifier_match
             && self.send == other.send
             && self.on_release == other.on_release
     }
@@ -49,7 +50,18 @@ impl KeyBinding {
         self.on_release = true;
         self
     }
-    pub fn matches(&self, keysym: evdev::Key, pressed_modifiers: &HashSet<Modifier>, on_release: bool) -> bool {}
+    pub fn matches(&self, keysym: evdev::Key, pressed_modifiers: &HashSet<Modifier>, on_release: bool) -> bool {
+        if self.keysym != keysym {
+            return false;
+        } if self.on_release != on_release {
+            return false;
+        }
+        match self.modifier_match {
+            ModifierMatch::Exact => self.modifiers == *pressed_modifiers, 
+            ModifierMatch::AtLeast => self.modifiers.is_subset(pressed_modifiers), 
+            ModifierMatch::Any => true
+        }
+    }
 }
 
 impl Prefix for KeyBinding {
@@ -191,7 +203,8 @@ pub fn parse_contents(contents: SwhkdParser) -> Result<Vec<Mode>, ParseError> {
                 mode_instructions: binding.mode_instructions.clone(),
             };
             // Replace existing hotkeys with same keybinding
-            pushmode.hotkeys.retain(|h| h.keybinding.keysym != hotkey.keybinding.keysym);
+            // pushmode.hotkeys.retain(|h| h.keybinding.keysym != hotkey.keybinding.keysym);
+            pushmode.hotkeys.retain(|h| h.keybinding != hotkey.keybinding);
             pushmode.hotkeys.push(hotkey);
         }
         pushmode.unbinds.extend(unbinds.iter().map(sweet_def_to_kb));
@@ -221,11 +234,12 @@ fn sweet_def_to_kb(def: &Definition) -> KeyBinding {
         keysym: def.key.key,
         modifiers,
         send: def.key.attribute == KeyAttribute::Send,
+        modifier_match: ModifierMatch::Exact,
         on_release: def.key.attribute == KeyAttribute::OnRelease,
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum ModifierMatch {
     Exact, 
     AtLeast, 
