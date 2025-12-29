@@ -13,7 +13,7 @@ pub fn load(path: &Path) -> Result<Vec<Mode>, ParseError> {
 pub struct KeyBinding {
     pub keysym: evdev::Key,
     pub modifiers: HashSet<Modifier>,
-    pub modifier_match: ModifierMatch, 
+    pub modifier_match: ModifierMatch,
     pub send: bool,
     pub on_release: bool,
 }
@@ -43,23 +43,35 @@ pub trait Value {
 
 impl KeyBinding {
     pub fn new(keysym: evdev::Key, modifiers: HashSet<Modifier>) -> Self {
-        KeyBinding { keysym, modifiers, send: false, on_release: false, modifier_match: ModifierMatch::Exact }
+        KeyBinding {
+            keysym,
+            modifiers,
+            send: false,
+            on_release: false,
+            modifier_match: ModifierMatch::Exact,
+        }
     }
 
     pub fn on_release(mut self) -> Self {
         self.on_release = true;
         self
     }
-    pub fn matches(&self, keysym: evdev::Key, pressed_modifiers: &HashSet<Modifier>, on_release: bool) -> bool {
+    pub fn matches(
+        &self,
+        keysym: evdev::Key,
+        pressed_modifiers: &HashSet<Modifier>,
+        on_release: bool,
+    ) -> bool {
         if self.keysym != keysym {
             return false;
-        } if self.on_release != on_release {
+        }
+        if self.on_release != on_release {
             return false;
         }
         match self.modifier_match {
-            ModifierMatch::Exact => self.modifiers == *pressed_modifiers, 
-            ModifierMatch::AtLeast => self.modifiers.is_subset(pressed_modifiers), 
-            ModifierMatch::Any => true
+            ModifierMatch::Exact => self.modifiers == *pressed_modifiers,
+            ModifierMatch::AtLeast => self.modifiers.is_subset(pressed_modifiers),
+            ModifierMatch::Any => true,
         }
     }
 }
@@ -241,7 +253,7 @@ fn sweet_def_to_kb(def: &Definition) -> KeyBinding {
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum ModifierMatch {
-    Exact, 
-    AtLeast, 
-    Any
+    Exact,
+    AtLeast,
+    Any,
 }
