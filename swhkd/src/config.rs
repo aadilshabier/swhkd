@@ -13,6 +13,7 @@ pub fn load(path: &Path) -> Result<Vec<Mode>, ParseError> {
 pub struct KeyBinding {
     pub keysym: evdev::Key,
     pub modifiers: HashSet<Modifier>,
+    pub modifier_match: ModifierMatch,
     pub send: bool,
     pub on_release: bool,
 }
@@ -22,6 +23,7 @@ impl PartialEq for KeyBinding {
         self.keysym == other.keysym
             // Comparisons are order independent without manual iterations
             && self.modifiers == other.modifiers
+            && self.modifier_match == other.modifier_match
             && self.send == other.send
             && self.on_release == other.on_release
     }
@@ -41,12 +43,36 @@ pub trait Value {
 
 impl KeyBinding {
     pub fn new(keysym: evdev::Key, modifiers: HashSet<Modifier>) -> Self {
-        KeyBinding { keysym, modifiers, send: false, on_release: false }
+        KeyBinding {
+            keysym,
+            modifiers,
+            send: false,
+            on_release: false,
+            modifier_match: ModifierMatch::Exact,
+        }
     }
 
     pub fn on_release(mut self) -> Self {
         self.on_release = true;
         self
+    }
+    pub fn matches(
+        &self,
+        keysym: evdev::Key,
+        pressed_modifiers: &HashSet<Modifier>,
+        on_release: bool,
+    ) -> bool {
+        if self.keysym != keysym {
+            return false;
+        }
+        if self.on_release != on_release {
+            return false;
+        }
+        match self.modifier_match {
+            ModifierMatch::Exact => self.modifiers == *pressed_modifiers,
+            ModifierMatch::AtLeast => self.modifiers.is_subset(pressed_modifiers),
+            ModifierMatch::Any => true,
+        }
     }
 }
 
@@ -189,7 +215,8 @@ pub fn parse_contents(contents: SwhkdParser) -> Result<Vec<Mode>, ParseError> {
                 mode_instructions: binding.mode_instructions.clone(),
             };
             // Replace existing hotkeys with same keybinding
-            pushmode.hotkeys.retain(|h| h.keybinding.keysym != hotkey.keybinding.keysym);
+            // pushmode.hotkeys.retain(|h| h.keybinding.keysym != hotkey.keybinding.keysym);
+            pushmode.hotkeys.retain(|h| h.keybinding != hotkey.keybinding);
             pushmode.hotkeys.push(hotkey);
         }
         pushmode.unbinds.extend(unbinds.iter().map(sweet_def_to_kb));
@@ -219,6 +246,14 @@ fn sweet_def_to_kb(def: &Definition) -> KeyBinding {
         keysym: def.key.key,
         modifiers,
         send: def.key.attribute == KeyAttribute::Send,
+        modifier_match: ModifierMatch::Exact,
         on_release: def.key.attribute == KeyAttribute::OnRelease,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum ModifierMatch {
+    Exact,
+    AtLeast,
+    Any,
 }

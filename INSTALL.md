@@ -12,8 +12,8 @@ Note: On some systems swhkd daemon might disable wifi due to issues with rfkill,
 
 **Runtime:**
 
--   Uinput kernel module
--   Evdev kernel module
+- `uinput` kernel module (usually loaded automatically)
+- `evdev` kernel module
 
 **Compile time:**
 
@@ -25,11 +25,18 @@ Note: On some systems swhkd daemon might disable wifi due to issues with rfkill,
 
 # Compiling:
 
--   `git clone https://github.com/waycrate/swhkd;cd swhkd`
+-   `git clone https://github.com/waycrate/swhkd`
+-	`cd swhkd`
 -   `make setup`
+-   `make`
 -   `make clean`
 -   `make`
 -   `sudo make install`
+
+### Arch Linux (AUR)
+
+- `swhkd-git`: official git package maintained here
+- `swhkd-bin`: binary release maintained by a community member
 
 # Running:
 
